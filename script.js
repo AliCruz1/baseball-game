@@ -168,6 +168,29 @@ class SoundManager {
         osc.start(now);
         osc.stop(now + 1.0);
     }
+
+    playSuperCharge() {
+        if (!this.initialized) return;
+        const ctx = this.audioContext;
+        const now = ctx.currentTime;
+
+        // High-pitched screamer for Super Fastball
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(400, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 1.0); // Screaming high
+
+        gain.gain.setValueAtTime(0.1, now);
+        gain.gain.linearRampToValueAtTime(0.01, now + 1.0);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc.start(now);
+        osc.stop(now + 1.0);
+    }
 }
 
 const soundManager = new SoundManager();
@@ -176,7 +199,8 @@ const soundManager = new SoundManager();
 const PITCH_TYPES = {
     FASTBALL: 'FASTBALL',
     CURVEBALL: 'CURVEBALL',
-    CHANGEUP: 'CHANGEUP'
+    CHANGEUP: 'CHANGEUP',
+    SUPER_FASTBALL: 'SUPER_FASTBALL'
 };
 
 const PITCHER_STATES = {
@@ -203,7 +227,7 @@ const bat = {
     y: 0,
     length: 50,
     width: 12,
-    angle: 0,
+    angle: Math.PI, // Start pointing Left
     swinging: false,
     swingSpeed: -0.3,
     pivotX: 0,
@@ -213,25 +237,43 @@ const bat = {
 const balls = [];
 
 // Fixed Resolution
-const GAME_WIDTH = 600;
-const GAME_HEIGHT = 800;
+let GAME_WIDTH = 600;
+let GAME_HEIGHT = 800;
+const BATTER_Y = 680; // Fixed batter position
 
 canvas.width = GAME_WIDTH;
 canvas.height = GAME_HEIGHT;
 
 // Resize handling
 function resize() {
-    const scaleX = window.innerWidth / GAME_WIDTH;
-    const scaleY = window.innerHeight / GAME_HEIGHT;
-    const scale = Math.min(scaleX, scaleY);
+    const windowRatio = window.innerWidth / window.innerHeight;
+    const gameRatio = 600 / 800; // 0.75
 
-    canvas.style.width = `${GAME_WIDTH * scale}px`;
-    canvas.style.height = `${GAME_HEIGHT * scale}px`;
+    if (windowRatio > gameRatio) {
+        // Screen is wider than game (Wide Screen)
+        // Fix Height at 800, Expand Width
+        GAME_HEIGHT = 800;
+        GAME_WIDTH = GAME_HEIGHT * windowRatio;
+    } else {
+        // Screen is taller than game (Tall Screen)
+        // Fix Width at 600, Expand Height
+        GAME_WIDTH = 600;
+        GAME_HEIGHT = GAME_WIDTH / windowRatio;
+    }
 
-    // Center entities based on fixed resolution
+    canvas.width = GAME_WIDTH;
+    canvas.height = GAME_HEIGHT;
+
+    // Scale canvas to fit window
+    canvas.style.width = `${window.innerWidth}px`;
+    canvas.style.height = `${window.innerHeight}px`;
+
+    // Center entities based on dynamic resolution
     pitcher.x = GAME_WIDTH / 2 - pitcher.width / 2;
+    pitcher.y = 150; // Fixed pitcher position
+
     bat.pivotX = GAME_WIDTH / 2 - 40;
-    bat.pivotY = GAME_HEIGHT - 120;
+    bat.pivotY = BATTER_Y; // Fixed batter position
 }
 
 window.addEventListener('resize', resize);
@@ -245,7 +287,7 @@ function swing() {
     }
     if (!bat.swinging) {
         bat.swinging = true;
-        bat.angle = 0;
+        bat.angle = Math.PI; // Start from Left
         soundManager.playSwing();
     }
 }
@@ -291,13 +333,88 @@ function drawPitcher() {
                 case PITCH_TYPES.FASTBALL: drawColor = '#ffffff'; break; // White
                 case PITCH_TYPES.CURVEBALL: drawColor = '#ff69b4'; break; // Pink
                 case PITCH_TYPES.CHANGEUP: drawColor = '#ffd700'; break; // Gold/Yellow
+                case PITCH_TYPES.SUPER_FASTBALL: drawColor = '#ff0000'; break; // Red
             }
         }
     }
 
-    drawRect(pitcher.x, pitcher.y, pitcher.width, pitcher.height, drawColor);
-    drawRect(pitcher.x + 8, pitcher.y - 10, 16, 16, '#ffccaa');
-    drawRect(pitcher.x + 6, pitcher.y - 14, 20, 6, '#e74c3c');
+    // Animation Logic based on State and Timer
+    if (pitcher.state === PITCHER_STATES.WINDUP) {
+        const progress = pitcher.timer / pitcher.windupDuration;
+
+        if (progress < 0.3) {
+            // PHASE 1: THE SET (Hands at chest)
+            // Torso
+            drawRect(pitcher.x, pitcher.y, pitcher.width, 20, drawColor);
+            // Legs (Standing straight)
+            drawRect(pitcher.x + 2, pitcher.y + 20, 10, 12, drawColor); // Left Leg
+            drawRect(pitcher.x + 20, pitcher.y + 20, 10, 12, drawColor); // Right Leg
+
+            drawRect(pitcher.x + 8, pitcher.y - 10, 16, 16, '#ffccaa'); // Head
+            drawRect(pitcher.x + 6, pitcher.y - 14, 20, 6, '#e74c3c'); // Hat
+
+            // Feet (Standing)
+            drawRect(pitcher.x + 2, pitcher.y + 32, 10, 4, '#000000'); // Left Shoe
+            drawRect(pitcher.x + 20, pitcher.y + 32, 10, 4, '#000000'); // Right Shoe
+
+            // Glove/Hands coming together (White)
+            drawRect(pitcher.x + 10, pitcher.y + 12, 12, 10, '#ffffff');
+
+        } else if (progress < 0.7) {
+            // PHASE 2: THE LEG KICK (Leg raises high)
+            // Torso
+            drawRect(pitcher.x, pitcher.y, pitcher.width, 20, drawColor);
+
+            // Pivot Leg (Right - Planted)
+            drawRect(pitcher.x + 20, pitcher.y + 20, 10, 12, drawColor);
+            drawRect(pitcher.x + 20, pitcher.y + 32, 10, 4, '#000000'); // Right Shoe
+
+            // Raised Leg (Left - High Knee)
+            drawRect(pitcher.x - 8, pitcher.y + 10, 10, 12, drawColor); // Thigh
+            drawRect(pitcher.x - 8, pitcher.y + 22, 10, 4, '#000000'); // Left Shoe (in air)
+
+            drawRect(pitcher.x + 8, pitcher.y - 10, 16, 16, '#ffccaa'); // Head
+            drawRect(pitcher.x + 6, pitcher.y - 14, 20, 6, '#e74c3c'); // Hat
+
+            // Glove tucked (White)
+            drawRect(pitcher.x + 20, pitcher.y + 12, 8, 8, '#ffffff');
+
+        } else {
+            // PHASE 3: THE THROW (Lunge and Extend)
+            // Torso (Leaning forward)
+            drawRect(pitcher.x + 5, pitcher.y + 2, pitcher.width, 20, drawColor);
+
+            // Lunge Leg (Left - Forward)
+            drawRect(pitcher.x + 35, pitcher.y + 22, 10, 10, drawColor);
+            drawRect(pitcher.x + 35, pitcher.y + 32, 10, 4, '#000000'); // Left Shoe
+
+            // Pivot Leg (Right - Trailing)
+            drawRect(pitcher.x + 5, pitcher.y + 22, 10, 10, drawColor);
+            drawRect(pitcher.x + 5, pitcher.y + 32, 10, 4, '#000000'); // Right Shoe
+
+            drawRect(pitcher.x + 13, pitcher.y - 8, 16, 16, '#ffccaa'); // Head
+            drawRect(pitcher.x + 11, pitcher.y - 12, 20, 6, '#e74c3c'); // Hat
+
+            // Throwing Arm Extending
+            drawRect(pitcher.x + 35, pitcher.y + 5, 12, 6, drawColor);
+            // Glove Hand Counter-balance (White)
+            drawRect(pitcher.x - 5, pitcher.y + 10, 8, 8, '#ffffff');
+        }
+    } else {
+        // IDLE POSE
+        // Torso
+        drawRect(pitcher.x, pitcher.y, pitcher.width, 20, drawColor);
+        // Legs
+        drawRect(pitcher.x + 2, pitcher.y + 20, 10, 12, drawColor);
+        drawRect(pitcher.x + 20, pitcher.y + 20, 10, 12, drawColor);
+
+        drawRect(pitcher.x + 8, pitcher.y - 10, 16, 16, '#ffccaa');
+        drawRect(pitcher.x + 6, pitcher.y - 14, 20, 6, '#e74c3c');
+
+        // Feet
+        drawRect(pitcher.x + 2, pitcher.y + 32, 10, 4, '#000000'); // Left Shoe
+        drawRect(pitcher.x + 20, pitcher.y + 32, 10, 4, '#000000'); // Right Shoe
+    }
 }
 
 function drawBat() {
@@ -323,7 +440,7 @@ function drawField() {
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
     const centerX = GAME_WIDTH / 2;
-    const homeY = GAME_HEIGHT - 120;
+    const homeY = BATTER_Y;
 
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
@@ -361,16 +478,22 @@ function drawField() {
 
 function update(dt) {
     // Pitcher State Machine
-    pitcher.timer += dt;
+
+    // Pacing: Only update pitcher timer if no balls are in play
+    if (balls.length === 0) {
+        pitcher.timer += dt;
+    }
 
     if (pitcher.state === PITCHER_STATES.IDLE) {
-        if (pitcher.timer > pitcher.idleDuration) {
+        // Increased idle duration for better pacing (1.5s)
+        if (pitcher.timer > 1500) {
             pitcher.state = PITCHER_STATES.WINDUP;
             pitcher.timer = 0;
 
             // Select random pitch
             const rand = Math.random();
-            if (rand < 0.5) pitcher.nextPitch = PITCH_TYPES.FASTBALL;
+            if (rand < 0.1) pitcher.nextPitch = PITCH_TYPES.SUPER_FASTBALL; // 10% chance
+            else if (rand < 0.5) pitcher.nextPitch = PITCH_TYPES.FASTBALL;
             else if (rand < 0.8) pitcher.nextPitch = PITCH_TYPES.CURVEBALL;
             else pitcher.nextPitch = PITCH_TYPES.CHANGEUP;
 
@@ -379,14 +502,23 @@ function update(dt) {
                 soundManager.playCurveCharge();
             } else if (pitcher.nextPitch === PITCH_TYPES.CHANGEUP) {
                 soundManager.playChangeCharge();
+            } else if (pitcher.nextPitch === PITCH_TYPES.SUPER_FASTBALL) {
+                soundManager.playSuperCharge();
             }
             // Fastball is silent
         }
     } else if (pitcher.state === PITCHER_STATES.WINDUP) {
+        // Timer always updates during windup
+        pitcher.timer += dt;
+
         if (pitcher.timer > pitcher.windupDuration) {
             // Throw ball
             pitcher.state = PITCHER_STATES.IDLE;
             pitcher.timer = 0;
+
+            // Progressive Difficulty: Speed increases with score
+            // Cap at 60% faster (multiplier 1.6)
+            const speedMultiplier = 1 + Math.min(score * 0.02, 0.6);
 
             let speedY = 0.35;
             let speedX = 0;
@@ -397,7 +529,12 @@ function update(dt) {
                 speedY = 0.25; // Slower
             } else if (pitcher.nextPitch === PITCH_TYPES.CURVEBALL) {
                 speedY = 0.35; // Normal speed
+            } else if (pitcher.nextPitch === PITCH_TYPES.SUPER_FASTBALL) {
+                speedY = 0.65; // Super Fast!
             }
+
+            // Apply Multiplier
+            speedY *= speedMultiplier;
 
             balls.push({
                 x: pitcher.x + pitcher.width / 2 - 5,
@@ -440,8 +577,8 @@ function update(dt) {
 
     if (bat.swinging) {
         bat.angle += bat.swingSpeed * (dt / 16);
-        if (bat.angle <= -Math.PI * 2) {
-            bat.angle = 0;
+        if (bat.angle <= -Math.PI) {
+            bat.angle = Math.PI;
             bat.swinging = false;
         }
     }
@@ -505,18 +642,38 @@ function update(dt) {
                     }, 1000);
 
                 } else {
-                    ball.speedY = Math.abs(ball.speedY * 1.5);
-
                     let foulAngle;
-                    if (hitAngle > -1.5) {
-                        foulAngle = -0.6;
+                    let foulType = "";
+                    const rand = Math.random();
+                    const offset = Math.pow(rand, 4) * 0.6;
+
+                    // Determine Direction and Speed based on offset
+                    if (offset < 0.2) {
+                        // Close Call -> Go FORWARD (Negative Y)
+                        // Make it fast like a hit
+                        ball.speedY = -Math.abs(ball.speedY * 2.5);
+                        foulType = "CLOSE CALL (FWD)";
                     } else {
-                        foulAngle = -2.5;
+                        // Way Back -> Go BACKWARD (Positive Y)
+                        ball.speedY = Math.abs(ball.speedY * 1.5);
+                        foulType = "WAY BACK (BACK)";
                     }
-                    foulAngle += (Math.random() - 0.5) * 0.4;
+
+                    // Randomly decide Left or Right foul (50/50)
+                    if (Math.random() > 0.5) {
+                        // Right Side Foul
+                        // Visual Line is at ~ -0.98 radians.
+                        // Start at -0.90 (Just outside/above the line).
+                        foulAngle = -0.90 + offset;
+                    } else {
+                        // Left Side Foul
+                        // Visual Line is at ~ -2.15 radians.
+                        // Start at -2.25 (Just outside/below the line).
+                        foulAngle = -2.25 - offset;
+                    }
 
                     ball.speedX = (foulAngle + Math.PI / 2) * 15;
-                    scoreDisplay.innerText = `Score: ${score} - FOUL`;
+                    scoreDisplay.innerText = `Score: ${score} - FOUL (${foulType})`;
                     soundManager.playFoul();
                 }
 
