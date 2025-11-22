@@ -551,6 +551,8 @@ function update(dt) {
             balls.push({
                 x: pitcher.x + pitcher.width / 2 - 5,
                 y: pitcher.y + pitcher.height,
+                startX: pitcher.x + pitcher.width / 2 - 5,
+                startY: pitcher.y + pitcher.height,
                 size: 10,
                 speedY: speedY * dt,
                 speedX: speedX, // Initial X speed
@@ -575,8 +577,29 @@ function update(dt) {
 
             // Ball Physics based on Type
             if (ball.type === PITCH_TYPES.CURVEBALL) {
-                // Sine wave movement
-                ball.x += Math.sin(ball.timeAlive * 0.005) * 2.0 * (dt / 16.667);
+                // Deterministic Curve based on distance traveled
+                // Ensures ball always behaves consistently regardless of speed
+                const totalDist = bat.pivotY - ball.startY;
+                const currentDist = ball.y - ball.startY;
+                const progress = Math.max(0, Math.min(1, currentDist / totalDist));
+
+                let offset = 0;
+                // Curve Phase: 0% to 75% of flight
+                if (progress < 0.75) {
+                    // Sine wave: 0 -> 1 -> 0
+                    // Curves out and comes back to center
+                    const curvePhase = (progress / 0.75) * Math.PI;
+                    // Amplitude of 50 pixels
+                    offset = Math.sin(curvePhase) * 50;
+
+                    // Alternate direction based on something? 
+                    // For now, let's just curve Left (negative) to simulate RHP breaking ball
+                    offset = -offset;
+                }
+                // Straight Phase: 75% to 100% (Over the plate)
+                // Offset remains 0 (Center)
+
+                ball.x = ball.startX + offset;
             }
 
             ball.y += ball.speedY;
