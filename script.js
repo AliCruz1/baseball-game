@@ -7,6 +7,9 @@ const scoreDisplay = document.getElementById('score');
 let gameActive = false;
 let score = 0;
 let lastTime = 0;
+const TARGET_FPS = 120;
+const TIME_STEP = 1000 / TARGET_FPS;
+let accumulator = 0;
 
 // Sound Manager
 class SoundManager {
@@ -239,7 +242,9 @@ const balls = [];
 // Fixed Resolution
 let GAME_WIDTH = 600;
 let GAME_HEIGHT = 800;
-const BATTER_Y = 680; // Fixed batter position
+const BASE_HEIGHT = 800;
+const BASE_BATTER_Y = 680;
+let playOffsetY = 0;
 
 canvas.width = GAME_WIDTH;
 canvas.height = GAME_HEIGHT;
@@ -269,11 +274,17 @@ function resize() {
     canvas.style.height = `${window.innerHeight}px`;
 
     // Center entities based on dynamic resolution
+    if (GAME_HEIGHT > BASE_HEIGHT) {
+        playOffsetY = (GAME_HEIGHT - BASE_HEIGHT) / 2;
+    } else {
+        playOffsetY = 0;
+    }
+
     pitcher.x = GAME_WIDTH / 2 - pitcher.width / 2;
-    pitcher.y = 150; // Fixed pitcher position
+    pitcher.y = 150 + playOffsetY;
 
     bat.pivotX = GAME_WIDTH / 2 - 40;
-    bat.pivotY = BATTER_Y; // Fixed batter position
+    bat.pivotY = BASE_BATTER_Y + playOffsetY;
 }
 
 window.addEventListener('resize', resize);
@@ -305,6 +316,7 @@ function startGame() {
     startScreen.style.display = 'none';
     balls.length = 0;
     lastTime = performance.now();
+    accumulator = 0;
     pitcher.state = PITCHER_STATES.IDLE;
     pitcher.timer = 0;
     soundManager.init();
@@ -440,7 +452,7 @@ function drawField() {
     ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
 
     const centerX = GAME_WIDTH / 2;
-    const homeY = BATTER_Y;
+    const homeY = bat.pivotY;
 
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
@@ -564,7 +576,7 @@ function update(dt) {
             // Ball Physics based on Type
             if (ball.type === PITCH_TYPES.CURVEBALL) {
                 // Sine wave movement
-                ball.x += Math.sin(ball.timeAlive * 0.005) * 2.0;
+                ball.x += Math.sin(ball.timeAlive * 0.005) * 2.0 * (dt / 16.667);
             }
 
             ball.y += ball.speedY;
@@ -618,19 +630,37 @@ function update(dt) {
                 const hitAngle = bat.angle;
                 const isGoodInput = hitAngle < -0.2 && hitAngle > -2.5;
 
+                // Fixed speed for all hits (user requested)
+                // Base speed of 12 pixels/frame @ 60fps, scaled by dt
+                const HIT_SPEED = 12 * (dt / 16.667);
+
+                // Field Geometry for strict foul lines
+                // Slope is 1.5 (from drawField)
+                const FAIR_ANGLE_RIGHT = Math.atan2(-1.5, 1); // ~ -0.98 rad
+                const FAIR_ANGLE_LEFT = Math.atan2(-1.5, -1); // ~ -2.16 rad
+                const SAFE_MARGIN = 0.1; // Buffer to ensure good hits are clearly fair
+
                 if (isGoodInput) {
+                    // Map timing to fair territory angles
                     const clampedInput = Math.max(-1.8, Math.min(-0.4, hitAngle));
                     const inputRatio = (clampedInput - (-0.4)) / (-1.8 - (-0.4));
 
-                    const jitter = (Math.random() - 0.5) * 0.1;
-                    let outputAngle = -1.35 + (inputRatio * (-1.8 - (-1.35))) + jitter;
+                    // Map ratio to Safe Zone within Fair Territory
+                    const safeRight = FAIR_ANGLE_RIGHT - SAFE_MARGIN;
+                    const safeLeft = FAIR_ANGLE_LEFT + SAFE_MARGIN;
 
-                    const safeRight = -1.35;
-                    const safeLeft = -1.8;
+                    let outputAngle = safeRight + (inputRatio * (safeLeft - safeRight));
+
+                    // Add slight jitter for realism
+                    const jitter = (Math.random() - 0.5) * 0.05;
+                    outputAngle += jitter;
+
+                    // Clamp again just to be safe
                     outputAngle = Math.max(safeLeft, Math.min(safeRight, outputAngle));
 
-                    ball.speedY = -Math.abs(ball.speedY * 3.0);
-                    ball.speedX = (outputAngle + Math.PI / 2) * 15;
+                    // Apply Velocity Vector
+                    ball.speedX = Math.cos(outputAngle) * HIT_SPEED;
+                    ball.speedY = Math.sin(outputAngle) * HIT_SPEED;
 
                     score++;
                     scoreDisplay.innerText = `Score: ${score} - GOOD HIT!`;
@@ -645,34 +675,29 @@ function update(dt) {
                     let foulAngle;
                     let foulType = "";
                     const rand = Math.random();
-                    const offset = Math.pow(rand, 4) * 0.6;
 
-                    // Determine Direction and Speed based on offset
-                    if (offset < 0.2) {
-                        // Close Call -> Go FORWARD (Negative Y)
-                        // Make it fast like a hit
-                        ball.speedY = -Math.abs(ball.speedY * 2.5);
-                        foulType = "CLOSE CALL (FWD)";
-                    } else {
-                        // Way Back -> Go BACKWARD (Positive Y)
-                        ball.speedY = Math.abs(ball.speedY * 1.5);
-                        foulType = "WAY BACK (BACK)";
-                    }
+                    // Determine if it's a "Close Call" (near the line) or "Way Back"
+                    // 30% Close Call, 70% Way Back
+                    const isCloseCall = rand < 0.3;
+                    const offset = isCloseCall ? 0.05 : (0.2 + Math.random() * 0.5);
 
                     // Randomly decide Left or Right foul (50/50)
                     if (Math.random() > 0.5) {
                         // Right Side Foul
-                        // Visual Line is at ~ -0.98 radians.
-                        // Start at -0.90 (Just outside/above the line).
-                        foulAngle = -0.90 + offset;
+                        // Must be GREATER than FAIR_ANGLE_RIGHT (closer to 0)
+                        foulAngle = FAIR_ANGLE_RIGHT + offset;
+                        foulType = isCloseCall ? "CLOSE CALL" : "WAY BACK";
                     } else {
                         // Left Side Foul
-                        // Visual Line is at ~ -2.15 radians.
-                        // Start at -2.25 (Just outside/below the line).
-                        foulAngle = -2.25 - offset;
+                        // Must be LESS than FAIR_ANGLE_LEFT (more negative)
+                        foulAngle = FAIR_ANGLE_LEFT - offset;
+                        foulType = isCloseCall ? "CLOSE CALL" : "WAY BACK";
                     }
 
-                    ball.speedX = (foulAngle + Math.PI / 2) * 15;
+                    // Apply Velocity Vector
+                    ball.speedX = Math.cos(foulAngle) * HIT_SPEED;
+                    ball.speedY = Math.sin(foulAngle) * HIT_SPEED;
+
                     scoreDisplay.innerText = `Score: ${score} - FOUL (${foulType})`;
                     soundManager.playFoul();
                 }
@@ -687,8 +712,18 @@ function update(dt) {
 function gameLoop(timestamp) {
     if (!gameActive) return;
 
-    const dt = timestamp - lastTime;
+    let dt = timestamp - lastTime;
     lastTime = timestamp;
+
+    // Prevent spiral of death if lag occurs
+    if (dt > 100) dt = 100;
+
+    accumulator += dt;
+
+    while (accumulator >= TIME_STEP) {
+        update(TIME_STEP);
+        accumulator -= TIME_STEP;
+    }
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -697,8 +732,6 @@ function gameLoop(timestamp) {
     drawBat();
 
     balls.forEach(drawBall);
-
-    update(dt);
 
     requestAnimationFrame(gameLoop);
 }
